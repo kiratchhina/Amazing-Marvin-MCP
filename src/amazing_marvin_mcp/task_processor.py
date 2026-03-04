@@ -25,7 +25,11 @@ TASK_FIELD_MAPPING = {
 }
 
 REFERENCE_MAPPINGS: dict[str, dict[str, Any]] = {
-    "project": {"id_fields": ["parentId", "parent_id"], "lookup_source": "projects"},
+    "project": {
+        "id_fields": ["parentId", "parent_id"],
+        "lookup_source": "projects",
+        "fallback_source": "categories",
+    },
     "category": {
         "id_fields": ["categoryId", "category_id"],
         "lookup_source": "categories",
@@ -118,6 +122,10 @@ def _process_references(
             references[ref_name] = refs if refs else None
         else:
             name = lookup_maps[lookup_source].get(str(ref_id))
+            if not name:
+                fallback = ref_config.get("fallback_source")
+                if fallback:
+                    name = lookup_maps[fallback].get(str(ref_id))
             if name:
                 references[ref_name] = Reference(item_id=str(ref_id), name=name)
 
