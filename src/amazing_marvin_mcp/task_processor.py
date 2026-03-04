@@ -25,7 +25,7 @@ TASK_FIELD_MAPPING = {
 }
 
 REFERENCE_MAPPINGS: dict[str, dict[str, Any]] = {
-    "project": {
+    "parent": {
         "id_fields": ["parentId", "parent_id"],
         "lookup_source": "projects",
         "fallback_source": "categories",
@@ -200,7 +200,7 @@ def create_clean_task(
         is_frogged=bool(clean_data.get("is_frogged", False)),
         time_estimate=clean_data.get("time_estimate"),
         time_block_section=clean_data.get("time_block_section"),
-        project=references.get("project"),
+        parent=references.get("parent"),
         category=references.get("category"),
         labels=references.get("labels"),
         other=other_fields if other_fields else None,
