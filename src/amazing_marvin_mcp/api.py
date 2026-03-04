@@ -278,7 +278,8 @@ class MarvinAPIClient:
         """Permanently delete a task (requires full-access token).
 
         Warning: This bypasses Marvin's trash. Deletion is not recoverable
-        through the Marvin UI.
+        through the Marvin UI. Prefer using update_task to set deletedAt
+        for recoverable trash behavior.
         """
         return self._make_full_access_request(
             "post", "/doc/delete", data={"itemId": task_id}
