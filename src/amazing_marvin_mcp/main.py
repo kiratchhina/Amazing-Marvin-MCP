@@ -1,9 +1,61 @@
+import json
 import logging
 import os
 import re
 import time
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import BeforeValidator
+
+
+def _coerce_json_list(v: Any) -> list | None:
+    """Coerce a JSON-encoded string to a list at Pydantic validation time.
+
+    MCP tool parameters may arrive as JSON strings when the transport
+    layer doesn't natively support complex types (e.g. Claude Code
+    serialises list parameters as strings).
+    """
+    if v is None:
+        return None
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        raise ValueError(
+            f"Expected list or JSON-encoded list, got string: {v!r}"
+        )
+    return v
+
+
+def _coerce_json_dict(v: Any) -> dict | None:
+    """Coerce a JSON-encoded string to a dict at Pydantic validation time."""
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        raise ValueError(
+            f"Expected dict or JSON-encoded dict, got string: {v!r}"
+        )
+    return v
+
+
+# Type aliases for parameters that may arrive as JSON strings from MCP clients
+JsonStrList = Annotated[list[str], BeforeValidator(_coerce_json_list)]
+JsonDictList = Annotated[list[dict], BeforeValidator(_coerce_json_list)]
+JsonDict = Annotated[dict, BeforeValidator(_coerce_json_dict)]
 
 from fastmcp import FastMCP
 
@@ -199,7 +251,7 @@ async def get_child_tasks(
 @mcp.tool()
 async def get_all_tasks(
     label: str | None = None,
-    fields: list[str] | None = None,
+    fields: JsonStrList | None = None,
     debug: bool = False,
 ) -> StandardResponse:
     """Get all tasks across all projects with optional label filtering (comprehensive search).
@@ -249,7 +301,7 @@ async def get_all_tasks(
 @mcp.tool()
 async def query_tasks(
     label: str | None = None,
-    fields: list[str] | None = None,
+    fields: JsonStrList | None = None,
     include_done: bool = False,
     contains: str | None = None,
     due: str | None = None,
@@ -572,12 +624,12 @@ async def create_task(
 
 @mcp.tool()
 async def mark_task_done(
-    item_id: str, timezone_offset: int = 0, debug: bool = False
+    task_id: str, timezone_offset: int = 0, debug: bool = False
 ) -> StandardResponse:
     """Mark a task as completed in Amazing Marvin.
 
     Args:
-        item_id: Task ID to mark as done
+        task_id: Task ID to mark as done
         timezone_offset: Timezone offset in minutes from UTC (e.g., -480 for PST)
 
     For completing multiple tasks, use batch_mark_done(task_ids) instead.
@@ -585,18 +637,18 @@ async def mark_task_done(
     start_time = time.time()
     try:
         api_client = create_api_client()
-        completed_task = api_client.mark_task_done(item_id, timezone_offset)
+        completed_task = api_client.mark_task_done(task_id, timezone_offset)
 
         return create_simple_response(
             data={"completed_task": completed_task},
-            summary_text=f"Marked task {item_id} as completed",
+            summary_text=f"Marked task {task_id} as completed",
             api_endpoint="/markDone",
             api_calls_made=1,
             debug=debug,
             start_time=start_time,
         )
     except Exception as e:
-        logger.exception("Failed to mark task %s as done", item_id)
+        logger.exception("Failed to mark task %s as done", task_id)
         return create_error_response(e, "/markDone", debug, start_time)
 
 
@@ -673,7 +725,7 @@ async def stop_time_tracking(task_id: str, debug: bool = False) -> StandardRespo
 
 
 @mcp.tool()
-async def get_time_tracks(task_ids: list[str], debug: bool = False) -> StandardResponse:
+async def get_time_tracks(task_ids: JsonStrList, debug: bool = False) -> StandardResponse:
     """Get time tracking data for specific tasks"""
     start_time = time.time()
     try:
@@ -765,7 +817,7 @@ async def create_project(
 @mcp.tool()
 async def create_project_with_tasks(
     project_title: str,
-    task_titles: list[str],
+    task_titles: JsonStrList,
     project_type: str = "project",
     debug: bool = False,
 ) -> StandardResponse:
@@ -824,7 +876,7 @@ async def read_doc(item_id: str, debug: bool = False) -> StandardResponse:
 @mcp.tool()
 async def update_doc(
     item_id: str,
-    setters: list[dict],
+    setters: JsonDictList,
     debug: bool = False,
 ) -> StandardResponse:
     """Update fields on any Amazing Marvin document.
@@ -898,7 +950,7 @@ async def update_doc(
 
 
 @mcp.tool()
-async def create_doc(doc_data: dict, debug: bool = False) -> StandardResponse:
+async def create_doc(doc_data: JsonDict, debug: bool = False) -> StandardResponse:
     """Create any Amazing Marvin document with full control over all fields.
 
     Unlike create_task, this gives direct access to all document fields
@@ -1016,7 +1068,7 @@ async def get_daily_productivity_overview(debug: bool = False) -> StandardRespon
 
 @mcp.tool()
 async def batch_create_tasks(
-    task_list: list[str],
+    task_list: JsonStrList,
     project_id: str | None = None,
     category_id: str | None = None,
     debug: bool = False,
@@ -1047,7 +1099,7 @@ async def batch_create_tasks(
 
 
 @mcp.tool()
-async def batch_mark_done(task_ids: list[str], debug: bool = False) -> StandardResponse:
+async def batch_mark_done(task_ids: JsonStrList, debug: bool = False) -> StandardResponse:
     """Mark multiple tasks as done at once"""
     start_time = time.time()
     try:
