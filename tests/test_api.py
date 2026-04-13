@@ -9,6 +9,8 @@ from amazing_marvin_mcp.analytics import get_productivity_summary
 from amazing_marvin_mcp.api import MarvinAPIClient, create_api_client
 from amazing_marvin_mcp.config import get_settings
 from amazing_marvin_mcp.projects import create_project_with_tasks
+from amazing_marvin_mcp.response_models import Reference
+from amazing_marvin_mcp.task_processor import create_clean_task
 from amazing_marvin_mcp.tasks import (
     batch_create_tasks,
     get_daily_focus,
@@ -223,6 +225,62 @@ class TestErrorHandling:
         children = api_client.get_children("invalid_project_id")
         # Should return empty list due to error handling
         assert isinstance(children, list)
+
+
+class TestParentIdResolution:
+    """Unit tests for parentId resolution fix (PR #8).
+
+    These tests require no API key — they exercise create_clean_task()
+    directly with hand-crafted lookup maps.
+
+    Before the fix: tasks whose parentId pointed to a category had
+    parent=None and project=None (orphaned). The 'parents' combined
+    lookup map and 'parent' reference mapping did not exist.
+    """
+
+    def _make_lookup_maps(self, projects: dict, categories: dict) -> dict:
+        return {
+            "projects": projects,
+            "categories": categories,
+            "labels": {},
+            "parents": {**categories, **projects},
+        }
+
+    def test_parentid_pointing_to_category_resolves_parent(self):
+        """parentId that maps to a category should resolve parent, not project."""
+        raw_task = {"_id": "task1", "title": "My Task", "parentId": "cat123"}
+        lookup_maps = self._make_lookup_maps(
+            projects={},
+            categories={"cat123": "My Category"},
+        )
+        task, _ = create_clean_task(raw_task, lookup_maps)
+
+        assert task.parent == Reference(item_id="cat123", name="My Category")
+        assert task.parent_id == "cat123"
+        assert task.project is None
+
+    def test_parentid_pointing_to_project_resolves_both(self):
+        """parentId that maps to a project should resolve both parent and project."""
+        raw_task = {"_id": "task1", "title": "My Task", "parentId": "proj456"}
+        lookup_maps = self._make_lookup_maps(
+            projects={"proj456": "My Project"},
+            categories={},
+        )
+        task, _ = create_clean_task(raw_task, lookup_maps)
+
+        assert task.parent == Reference(item_id="proj456", name="My Project")
+        assert task.project == Reference(item_id="proj456", name="My Project")
+        assert task.parent_id == "proj456"
+
+    def test_task_without_parentid_has_no_parent(self):
+        """Tasks with no parentId should have parent=None and project=None."""
+        raw_task = {"_id": "task1", "title": "Standalone Task"}
+        lookup_maps = self._make_lookup_maps(projects={}, categories={})
+        task, _ = create_clean_task(raw_task, lookup_maps)
+
+        assert task.parent is None
+        assert task.project is None
+        assert task.parent_id is None
 
 
 class TestProjectPlanningEnhancements:
