@@ -9,6 +9,7 @@ import pytest
 import requests
 
 from amazing_marvin_mcp.main import delete_doc as delete_doc_tool
+from amazing_marvin_mcp.main import get_child_tasks as get_child_tasks_tool
 from amazing_marvin_mcp.analytics import (
     get_completed_tasks,
     get_daily_productivity_overview,
@@ -571,6 +572,75 @@ class TestGetAllTasksFieldProjection:
         task = result["tasks"][0]
         assert "nonexistent" not in task
         assert "_id" in task
+
+
+class TestGetChildTasksTypeSplit:
+    """Regression tests for the category-leaks-into-tasks bug.
+
+    Before the fix: items with type='category' were classified as tasks
+    because the filter was `!= 'project'` instead of `not in ('project', 'category')`.
+    Plain tasks (no type field) should get type='task' injected.
+    """
+
+    def _make_client(self, children: list) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.get_children.return_value = children
+        return client
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_category_child_does_not_appear_in_tasks(self, mock_create: MagicMock) -> None:
+        children = [
+            {"_id": "t1", "title": "A task"},
+            {"_id": "c1", "title": "A category", "type": "category"},
+        ]
+        mock_create.return_value = self._make_client(children)
+
+        result = asyncio.run(get_child_tasks_tool("parent1"))
+
+        data = result.data
+        task_ids = [t["_id"] for t in data["tasks"]]
+        category_ids = [c["_id"] for c in data["categories"]]
+        assert "c1" not in task_ids
+        assert "c1" in category_ids
+        assert "t1" in task_ids
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_task_without_type_gets_type_injected(self, mock_create: MagicMock) -> None:
+        children = [{"_id": "t1", "title": "A task"}]
+        mock_create.return_value = self._make_client(children)
+
+        result = asyncio.run(get_child_tasks_tool("parent1"))
+
+        task = result.data["tasks"][0]
+        assert task["type"] == "task"
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_counts_are_correct(self, mock_create: MagicMock) -> None:
+        children = [
+            {"_id": "t1", "title": "Task"},
+            {"_id": "p1", "title": "Project", "type": "project"},
+            {"_id": "c1", "title": "Category", "type": "category"},
+        ]
+        mock_create.return_value = self._make_client(children)
+
+        result = asyncio.run(get_child_tasks_tool("parent1"))
+
+        data = result.data
+        assert data["task_count"] == 1
+        assert data["project_count"] == 1
+        assert data["category_count"] == 1
+        assert data["total_children"] == 3
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_all_children_is_unmodified(self, mock_create: MagicMock) -> None:
+        """all_children must preserve raw API data — no type injection."""
+        children = [{"_id": "t1", "title": "A task"}]
+        mock_create.return_value = self._make_client(children)
+
+        result = asyncio.run(get_child_tasks_tool("parent1"))
+
+        raw = result.data["all_children"][0]
+        assert "type" not in raw
 
 
 class TestDeleteDocTool:

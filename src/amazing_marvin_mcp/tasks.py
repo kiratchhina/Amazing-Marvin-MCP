@@ -166,16 +166,23 @@ def get_child_tasks_recursive(
     all_children = _get_all_children_recursive(api_client, parent_id)
 
     # Categorize children by type
-    tasks = [item for item in all_children if item.get("type") != "project"]
+    tasks = [
+        {**item, "type": "task"} if "type" not in item else item
+        for item in all_children
+        if item.get("type") not in ("project", "category")
+    ]
     projects = [item for item in all_children if item.get("type") == "project"]
+    categories = [item for item in all_children if item.get("type") == "category"]
 
     return {
         "parent_id": parent_id,
         "total_children": len(all_children),
         "tasks": tasks,
         "projects": projects,
+        "categories": categories,
         "task_count": len(tasks),
         "project_count": len(projects),
+        "category_count": len(categories),
         "all_children": all_children,
         "recursive": True,
     }

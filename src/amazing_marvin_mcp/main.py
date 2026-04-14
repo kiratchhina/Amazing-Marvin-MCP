@@ -167,16 +167,23 @@ async def get_child_tasks(
         else:
             children = api_client.get_children(parent_id)
             # Categorize non-recursive results for consistency
-            tasks = [item for item in children if item.get("type") != "project"]
+            tasks = [
+                {**item, "type": "task"} if "type" not in item else item
+                for item in children
+                if item.get("type") not in ("project", "category")
+            ]
             projects = [item for item in children if item.get("type") == "project"]
+            categories = [item for item in children if item.get("type") == "category"]
 
             result = {
                 "parent_id": parent_id,
                 "total_children": len(children),
                 "tasks": tasks,
                 "projects": projects,
+                "categories": categories,
                 "task_count": len(tasks),
                 "project_count": len(projects),
+                "category_count": len(categories),
                 "all_children": children,
                 "recursive": False,
             }
