@@ -5,6 +5,9 @@ from datetime import datetime
 import pytest
 import requests
 
+from unittest.mock import MagicMock, patch
+
+from amazing_marvin_mcp.analytics import get_completed_tasks, get_daily_productivity_overview
 from amazing_marvin_mcp.analytics import get_productivity_summary
 from amazing_marvin_mcp.api import MarvinAPIClient, create_api_client
 from amazing_marvin_mcp.config import get_settings
@@ -225,6 +228,66 @@ class TestErrorHandling:
         children = api_client.get_children("invalid_project_id")
         # Should return empty list due to error handling
         assert isinstance(children, list)
+
+
+class TestTimezoneAwareness:
+    """Unit tests for local timezone fix (caffme commit 1758871).
+
+    Verifies that API calls for "today" items pass an explicit local date
+    rather than relying on the Marvin API's UTC default. Without the fix,
+    users in non-UTC timezones would receive wrong-day items during
+    the window after local midnight but before UTC midnight.
+
+    All tests mock the API client and DateUtils.get_today() — no API key needed.
+    Before the fix: get_tasks() and get_done_items() were called without a date
+    argument, so these assertions would fail.
+    """
+
+    FIXED_DATE = "2026-04-14"
+
+    def _make_api_client(self):
+        client = MagicMock(spec=MarvinAPIClient)
+        client.get_tasks.return_value = []
+        client.get_done_items.return_value = []
+        client.get_due_items.return_value = []
+        client.get_projects.return_value = []
+        client.get_categories.return_value = []
+        client.get_goals.return_value = []
+        client.get_labels.return_value = []
+        return client
+
+    def test_get_daily_focus_passes_local_date(self):
+        """get_daily_focus() must pass local date to get_tasks and get_done_items."""
+        client = self._make_api_client()
+        with patch("amazing_marvin_mcp.tasks.DateUtils.get_today", return_value=self.FIXED_DATE):
+            get_daily_focus(client)
+        client.get_tasks.assert_called_once_with(date=self.FIXED_DATE)
+        client.get_done_items.assert_called_once_with(date=self.FIXED_DATE)
+
+    def test_quick_daily_planning_passes_local_date(self):
+        """quick_daily_planning() must pass local date to get_tasks."""
+        client = self._make_api_client()
+        with patch("amazing_marvin_mcp.tasks.DateUtils.get_today", return_value=self.FIXED_DATE):
+            quick_daily_planning(client)
+        client.get_tasks.assert_called_once_with(date=self.FIXED_DATE)
+
+    def test_get_completed_tasks_passes_local_date(self):
+        """get_completed_tasks() must pass local date to get_done_items for today."""
+        client = self._make_api_client()
+        with patch("amazing_marvin_mcp.analytics.DateUtils.get_today", return_value=self.FIXED_DATE):
+            get_completed_tasks(client)
+        calls = [str(c) for c in client.get_done_items.call_args_list]
+        assert any(self.FIXED_DATE in c for c in calls), (
+            f"Expected get_done_items to be called with date={self.FIXED_DATE!r}, got: {calls}"
+        )
+
+    def test_get_daily_productivity_overview_passes_local_date(self):
+        """get_daily_productivity_overview() must pass local date to get_tasks and get_done_items."""
+        client = self._make_api_client()
+        with patch("amazing_marvin_mcp.analytics.DateUtils.get_today", return_value=self.FIXED_DATE):
+            get_daily_productivity_overview(client)
+        client.get_tasks.assert_called_once_with(date=self.FIXED_DATE)
+        client.get_done_items.assert_called_once_with(date=self.FIXED_DATE)
 
 
 class TestParentIdResolution:
