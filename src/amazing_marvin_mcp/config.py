@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     # API settings
     amazing_marvin_api_key: str = Field(..., env="AMAZING_MARVIN_API_KEY")
+    amazing_marvin_full_access_token: str = Field(
+        default="", env="AMAZING_MARVIN_FULL_ACCESS_TOKEN"
+    )
 
     # Server settings
     port: int = Field(default=3000, env="PORT")

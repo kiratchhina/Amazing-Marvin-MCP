@@ -209,7 +209,9 @@ def get_all_nested_items(
 
 
 def get_all_tasks_impl(
-    api_client: MarvinAPIClient, label: str | None = None
+    api_client: MarvinAPIClient,
+    label: str | None = None,
+    fields: list[str] | None = None,
 ) -> dict[str, Any]:
     """Get all tasks and projects with optional label filtering, using recursive traversal."""
     try:
@@ -254,6 +256,9 @@ def get_all_tasks_impl(
             for item in all_items
             if item.get("type") not in ["project", "category"]
         ]
+
+        if fields:
+            tasks = [{k: t[k] for k in fields if k in t} for t in tasks]
 
         return {
             "tasks": tasks,

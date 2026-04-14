@@ -1,14 +1,17 @@
 """Pytest tests for Amazing Marvin MCP API functionality."""
 
 from datetime import datetime
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
-from unittest.mock import MagicMock, patch
-
-from amazing_marvin_mcp.analytics import get_completed_tasks, get_daily_productivity_overview
-from amazing_marvin_mcp.analytics import get_productivity_summary
+from amazing_marvin_mcp.analytics import (
+    get_completed_tasks,
+    get_daily_productivity_overview,
+    get_productivity_summary,
+)
 from amazing_marvin_mcp.api import MarvinAPIClient, create_api_client
 from amazing_marvin_mcp.config import get_settings
 from amazing_marvin_mcp.projects import create_project_with_tasks
@@ -16,6 +19,7 @@ from amazing_marvin_mcp.response_models import Reference
 from amazing_marvin_mcp.task_processor import create_clean_task
 from amazing_marvin_mcp.tasks import (
     batch_create_tasks,
+    get_all_tasks_impl,
     get_daily_focus,
     quick_daily_planning,
 )
@@ -259,7 +263,9 @@ class TestTimezoneAwareness:
     def test_get_daily_focus_passes_local_date(self):
         """get_daily_focus() must pass local date to get_tasks and get_done_items."""
         client = self._make_api_client()
-        with patch("amazing_marvin_mcp.tasks.DateUtils.get_today", return_value=self.FIXED_DATE):
+        with patch(
+            "amazing_marvin_mcp.tasks.DateUtils.get_today", return_value=self.FIXED_DATE
+        ):
             get_daily_focus(client)
         client.get_tasks.assert_called_once_with(date=self.FIXED_DATE)
         client.get_done_items.assert_called_once_with(date=self.FIXED_DATE)
@@ -267,14 +273,19 @@ class TestTimezoneAwareness:
     def test_quick_daily_planning_passes_local_date(self):
         """quick_daily_planning() must pass local date to get_tasks."""
         client = self._make_api_client()
-        with patch("amazing_marvin_mcp.tasks.DateUtils.get_today", return_value=self.FIXED_DATE):
+        with patch(
+            "amazing_marvin_mcp.tasks.DateUtils.get_today", return_value=self.FIXED_DATE
+        ):
             quick_daily_planning(client)
         client.get_tasks.assert_called_once_with(date=self.FIXED_DATE)
 
     def test_get_completed_tasks_passes_local_date(self):
         """get_completed_tasks() must pass local date to get_done_items for today."""
         client = self._make_api_client()
-        with patch("amazing_marvin_mcp.analytics.DateUtils.get_today", return_value=self.FIXED_DATE):
+        with patch(
+            "amazing_marvin_mcp.analytics.DateUtils.get_today",
+            return_value=self.FIXED_DATE,
+        ):
             get_completed_tasks(client)
         calls = [str(c) for c in client.get_done_items.call_args_list]
         assert any(self.FIXED_DATE in c for c in calls), (
@@ -284,7 +295,10 @@ class TestTimezoneAwareness:
     def test_get_daily_productivity_overview_passes_local_date(self):
         """get_daily_productivity_overview() must pass local date to get_tasks and get_done_items."""
         client = self._make_api_client()
-        with patch("amazing_marvin_mcp.analytics.DateUtils.get_today", return_value=self.FIXED_DATE):
+        with patch(
+            "amazing_marvin_mcp.analytics.DateUtils.get_today",
+            return_value=self.FIXED_DATE,
+        ):
             get_daily_productivity_overview(client)
         client.get_tasks.assert_called_once_with(date=self.FIXED_DATE)
         client.get_done_items.assert_called_once_with(date=self.FIXED_DATE)
@@ -413,6 +427,148 @@ class TestProjectPlanningEnhancements:
         assert "success_count" in result
         assert result["success_count"] >= 0
         assert result["total_requested"] == TASK_COUNT
+
+
+class TestFullAccessToken:
+    """Unit tests for full-access token functionality. No live API calls."""
+
+    BASE_URL = "https://serv.amazingmarvin.com/api"
+
+    def _client(self, token: str = "") -> MarvinAPIClient:
+        return MarvinAPIClient(api_key="key", full_access_token=token)
+
+    def _mock_response(self, payload: Any, status: int = 200) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = status
+        resp.content = b"x"
+        resp.json.return_value = payload
+        resp.raise_for_status.return_value = None
+        return resp
+
+    # --- has_full_access property ---
+
+    def test_has_full_access_false_without_token(self):
+        assert self._client().has_full_access is False
+
+    def test_has_full_access_true_with_token(self):
+        assert self._client("tok123").has_full_access is True
+
+    # --- guard: ValueError when token absent ---
+
+    def test_read_doc_raises_without_token(self):
+        with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
+            self._client().read_doc("id1")
+
+    def test_update_doc_raises_without_token(self):
+        with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
+            self._client().update_doc("id1", {"title": "x"})
+
+    def test_create_doc_raises_without_token(self):
+        with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
+            self._client().create_doc({"title": "x"})
+
+    def test_delete_doc_raises_without_token(self):
+        with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
+            self._client().delete_doc("id1")
+
+    # --- correct HTTP method, URL, headers, payload ---
+
+    @patch("requests.get")
+    def test_read_doc_uses_get_and_full_access_header(self, mock_get: MagicMock):
+        mock_get.return_value = self._mock_response({"_id": "id1", "title": "T"})
+        result = self._client("tok").read_doc("id1")
+        mock_get.assert_called_once_with(
+            f"{self.BASE_URL}/doc?id=id1",
+            headers={"X-Full-Access-Token": "tok"},
+        )
+        assert result["_id"] == "id1"
+
+    @patch("requests.post")
+    def test_update_doc_sends_correct_payload(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"_id": "id1"})
+        self._client("tok").update_doc("id1", {"note": "hi"})
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/doc/update",
+            headers={"X-Full-Access-Token": "tok"},
+            json={"itemId": "id1", "setters": [{"key": "note", "val": "hi"}]},
+        )
+
+    @patch("requests.post")
+    def test_create_doc_sends_correct_payload(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"_id": "new1"})
+        self._client("tok").create_doc({"title": "Raw"})
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/doc/create",
+            headers={"X-Full-Access-Token": "tok"},
+            json={"doc": {"title": "Raw"}},
+        )
+
+    @patch("requests.post")
+    def test_delete_doc_sends_correct_payload(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({})
+        self._client("tok").delete_doc("id1")
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/doc/delete",
+            headers={"X-Full-Access-Token": "tok"},
+            json={"itemId": "id1"},
+        )
+
+    @patch("requests.get")
+    def test_read_doc_does_not_use_api_token_header(self, mock_get: MagicMock):
+        """Full-access requests must NOT send X-API-Token."""
+        mock_get.return_value = self._mock_response({"_id": "id1"})
+        self._client("tok").read_doc("id1")
+        call_headers = mock_get.call_args.kwargs["headers"]
+        assert "X-API-Token" not in call_headers
+
+
+class TestGetAllTasksFieldProjection:
+    """Unit tests for get_all_tasks fields parameter."""
+
+    def _make_api_client(self) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.get_tasks.return_value = []
+        client.get_due_items.return_value = []
+        client.get_projects.return_value = []
+        client.get_categories.return_value = [
+            {"_id": "cat1", "type": "category", "title": "Work"}
+        ]
+        client.get_children.return_value = [
+            {"_id": "t1", "title": "Task One", "note": "details", "parentId": "cat1"}
+        ]
+        return client
+
+    def test_fields_none_returns_full_task_dicts(self):
+        client = self._make_api_client()
+        with patch(
+            "amazing_marvin_mcp.tasks.DateUtils.get_today", return_value="2026-04-14"
+        ):
+            result = get_all_tasks_impl(client, label=None, fields=None)
+        task = result["tasks"][0]
+        assert "title" in task
+        assert "note" in task
+
+    def test_fields_list_projects_specified_keys_only(self):
+        client = self._make_api_client()
+        with patch(
+            "amazing_marvin_mcp.tasks.DateUtils.get_today", return_value="2026-04-14"
+        ):
+            result = get_all_tasks_impl(client, label=None, fields=["_id", "title"])
+        task = result["tasks"][0]
+        assert set(task.keys()) == {"_id", "title"}
+
+    def test_fields_silently_drops_missing_keys(self):
+        """Requesting a field that doesn't exist on a task should not raise."""
+        client = self._make_api_client()
+        with patch(
+            "amazing_marvin_mcp.tasks.DateUtils.get_today", return_value="2026-04-14"
+        ):
+            result = get_all_tasks_impl(
+                client, label=None, fields=["_id", "nonexistent"]
+            )
+        task = result["tasks"][0]
+        assert "nonexistent" not in task
+        assert "_id" in task
 
 
 if __name__ == "__main__":

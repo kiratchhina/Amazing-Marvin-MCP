@@ -11,22 +11,32 @@ logger = logging.getLogger(__name__)
 def create_api_client() -> "MarvinAPIClient":
     """Create API client with settings."""
     settings = get_settings()
-    return MarvinAPIClient(api_key=settings.amazing_marvin_api_key)
+    return MarvinAPIClient(
+        api_key=settings.amazing_marvin_api_key,
+        full_access_token=settings.amazing_marvin_full_access_token,
+    )
 
 
 class MarvinAPIClient:
     """API client for Amazing Marvin"""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, full_access_token: str = ""):
         """
         Initialize the API client with the API key
 
         Args:
             api_key: Amazing Marvin API key
+            full_access_token: Optional full-access token for CRUD operations
         """
         self.api_key = api_key
         self.base_url = "https://serv.amazingmarvin.com/api"  # Removed v1 from URL
         self.headers = {"X-API-Token": api_key}
+        self.full_access_token = full_access_token
+        self.full_access_headers = {"X-Full-Access-Token": full_access_token}
+
+    @property
+    def has_full_access(self) -> bool:
+        return bool(self.full_access_token)
 
     def _make_request(
         self, method: str, endpoint: str, data: dict | None = None
@@ -61,6 +71,64 @@ class MarvinAPIClient:
         except requests.exceptions.RequestException:
             logger.exception("Request error")
             raise
+
+    def _make_full_access_request(
+        self, method: str, endpoint: str, data: dict | None = None
+    ) -> Any:
+        """Make a request using the full-access token."""
+        if not self.has_full_access:
+            raise ValueError(
+                "Full-access token not configured. Set AMAZING_MARVIN_FULL_ACCESS_TOKEN."
+            )
+        url = f"{self.base_url}{endpoint}"
+        logger.debug("Making full-access %s request to %s", method, url)
+
+        try:
+            if method.lower() == "get":
+                response = requests.get(url, headers=self.full_access_headers)
+            elif method.lower() == "post":
+                response = requests.post(
+                    url, headers=self.full_access_headers, json=data
+                )
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+
+            response.raise_for_status()
+
+            no_content_status = 204
+            if response.status_code == no_content_status or not response.content:
+                return {}
+
+            return response.json()
+        except requests.exceptions.HTTPError:
+            logger.exception("HTTP error (full-access)")
+            raise
+        except requests.exceptions.RequestException:
+            logger.exception("Request error (full-access)")
+            raise
+
+    def read_doc(self, item_id: str) -> dict:
+        """Read any Marvin document by ID (requires full-access token)."""
+        return self._make_full_access_request("get", f"/doc?id={item_id}")
+
+    def update_doc(self, item_id: str, setters: dict) -> dict:
+        """Update fields on any Marvin document (requires full-access token)."""
+        wire_setters = [{"key": k, "val": v} for k, v in setters.items()]
+        return self._make_full_access_request(
+            "post", "/doc/update", data={"itemId": item_id, "setters": wire_setters}
+        )
+
+    def create_doc(self, doc_data: dict) -> dict:
+        """Create a raw document. Warning: can create malformed tasks. Not exposed as MCP tool."""
+        return self._make_full_access_request(
+            "post", "/doc/create", data={"doc": doc_data}
+        )
+
+    def delete_doc(self, item_id: str) -> dict:
+        """Permanently delete a document. Not exposed as MCP tool."""
+        return self._make_full_access_request(
+            "post", "/doc/delete", data={"itemId": item_id}
+        )
 
     def get_tasks(self, date: str | None = None) -> list[dict]:
         """Get all tasks and projects (use /todayItems or /dueItems for scheduled/due, or /children for subtasks)"""

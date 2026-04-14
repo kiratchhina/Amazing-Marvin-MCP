@@ -197,7 +197,9 @@ async def get_child_tasks(
 
 @mcp.tool()
 async def get_all_tasks(
-    label: str | None = None, debug: bool = False
+    label: str | None = None,
+    fields: list[str] | None = None,
+    debug: bool = False,
 ) -> StandardResponse:
     """Get all tasks across all projects with optional label filtering (comprehensive search).
 
@@ -206,13 +208,15 @@ async def get_all_tasks(
 
     Args:
         label: Optional label name to filter by. If None, returns all tasks.
+        fields: Optional list of field names to include in each task dict.
+                If None, all fields are returned. Unknown fields are silently ignored.
 
     Note: This is a heavy operation that recursively searches all projects.
     """
     start_time = time.time()
     try:
         api_client = create_api_client()
-        result = get_all_tasks_impl(api_client, label)
+        result = get_all_tasks_impl(api_client, label, fields)
 
         # Estimate API calls based on typical project count
         estimated_api_calls = result.get("api_calls_made", 5)
@@ -229,6 +233,67 @@ async def get_all_tasks(
     except Exception as e:
         logger.exception("Failed to get all tasks")
         return create_error_response(e, "/categories + /children", debug, start_time)
+
+
+@mcp.tool()
+async def read_doc(item_id: str, debug: bool = False) -> StandardResponse:
+    """Read any Marvin document by ID (requires AMAZING_MARVIN_FULL_ACCESS_TOKEN).
+
+    Use to fetch a task, project, or category by its internal _id when you need
+    the full raw document including fields not exposed by other tools.
+
+    Args:
+        item_id: The document's _id (e.g. from a previous task listing)
+    """
+    start_time = time.time()
+    try:
+        api_client = create_api_client()
+        result = api_client.read_doc(item_id)
+
+        return create_simple_response(
+            data=result,
+            summary_text=f"Retrieved document {item_id}",
+            api_endpoint=f"/doc?id={item_id}",
+            api_calls_made=1,
+            debug=debug,
+            start_time=start_time,
+        )
+    except Exception as e:
+        logger.exception("Failed to read doc %s", item_id)
+        return create_error_response(e, "/doc", debug, start_time)
+
+
+@mcp.tool()
+async def update_doc(
+    item_id: str, setters: dict[str, Any], debug: bool = False
+) -> StandardResponse:
+    """Update fields on any Marvin document (requires AMAZING_MARVIN_FULL_ACCESS_TOKEN).
+
+    Use to edit task or project fields that the standard API token cannot change
+    (e.g. title, note, due date, parentId).
+
+    Args:
+        item_id: The document's _id
+        setters: Dict of fields to set, e.g. {"note": "updated text", "title": "New title"}
+
+    Note: Changes are reversible by calling update_doc again with the original values.
+    """
+    start_time = time.time()
+    try:
+        api_client = create_api_client()
+        result = api_client.update_doc(item_id, setters)
+
+        return create_simple_response(
+            data=result,
+            summary_text=f"Updated document {item_id} with {len(setters)} field(s)",
+            api_endpoint="/doc/update",
+            api_calls_made=1,
+            debug=debug,
+            start_time=start_time,
+        )
+    except Exception as e:
+        logger.exception("Failed to update doc %s", item_id)
+        return create_error_response(e, "/doc/update", debug, start_time)
 
 
 @mcp.tool()
