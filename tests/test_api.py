@@ -1,5 +1,6 @@
 """Pytest tests for Amazing Marvin MCP API functionality."""
 
+import asyncio
 from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -7,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from amazing_marvin_mcp.main import delete_doc as delete_doc_tool
 from amazing_marvin_mcp.analytics import (
     get_completed_tasks,
     get_daily_productivity_overview,
@@ -569,6 +571,94 @@ class TestGetAllTasksFieldProjection:
         task = result["tasks"][0]
         assert "nonexistent" not in task
         assert "_id" in task
+
+
+class TestDeleteDocTool:
+    """Unit tests for the delete_doc MCP tool safety pre-flight logic.
+
+    These tests exercise the three-tier classification (task / container /
+    internal doc) without making any live API calls.
+    """
+
+    def _make_client(
+        self, doc: dict, children: list | None = None
+    ) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.read_doc.return_value = doc
+        client.get_children.return_value = children if children is not None else []
+        client.delete_doc.return_value = {}
+        return client
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_task_is_deleted(self, mock_create: MagicMock) -> None:
+        """Plain tasks (db=Tasks, no container type) should be deleted immediately."""
+        doc = {"_id": "t1", "db": "Tasks", "title": "Buy milk"}
+        client = self._make_client(doc)
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_doc_tool("t1"))
+
+        assert result.success is True
+        assert result.data["deleted_title"] == "Buy milk"
+        assert result.data["deleted_type"] == "task"
+        client.delete_doc.assert_called_once_with("t1")
+        client.get_children.assert_not_called()
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_non_empty_project_is_blocked(self, mock_create: MagicMock) -> None:
+        """Projects with children must be blocked; delete_doc must not be called."""
+        doc = {"_id": "p1", "type": "project", "title": "My Project"}
+        children = [{"_id": "t1", "title": "Child task"}]
+        client = self._make_client(doc, children)
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_doc_tool("p1"))
+
+        assert result.success is False
+        assert "1" in result.summary.text  # child count present in message
+        client.delete_doc.assert_not_called()
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_non_empty_category_is_blocked(self, mock_create: MagicMock) -> None:
+        """Categories with children must be blocked; delete_doc must not be called."""
+        doc = {"_id": "c1", "type": "category", "title": "Work"}
+        children = [{"_id": "t2", "title": "Sub-task"}, {"_id": "t3", "title": "Another"}]
+        client = self._make_client(doc, children)
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_doc_tool("c1"))
+
+        assert result.success is False
+        assert "2" in result.summary.text
+        client.delete_doc.assert_not_called()
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_empty_project_is_deleted(self, mock_create: MagicMock) -> None:
+        """Empty projects (no children) should be allowed through."""
+        doc = {"_id": "p2", "type": "project", "title": "Empty Project"}
+        client = self._make_client(doc, children=[])
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_doc_tool("p2"))
+
+        assert result.success is True
+        assert result.data["deleted_title"] == "Empty Project"
+        assert result.data["deleted_type"] == "project"
+        client.delete_doc.assert_called_once_with("p2")
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_internal_doc_is_blocked(self, mock_create: MagicMock) -> None:
+        """Non-task, non-container documents (Goals, Labels, etc.) must always be blocked."""
+        doc = {"_id": "g1", "db": "Goals", "title": "My Goal"}
+        client = self._make_client(doc)
+        mock_create.return_value = client
+
+        result = asyncio.run(delete_doc_tool("g1"))
+
+        assert result.success is False
+        assert "Goals" in result.summary.text
+        client.delete_doc.assert_not_called()
+        client.get_children.assert_not_called()
 
 
 if __name__ == "__main__":

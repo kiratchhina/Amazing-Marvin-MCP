@@ -297,6 +297,76 @@ async def update_doc(
 
 
 @mcp.tool()
+async def delete_doc(item_id: str, debug: bool = False) -> StandardResponse:
+    """Permanently delete an Amazing Marvin task or empty project/category.
+
+    Safety checks run before deletion:
+    - Plain tasks (db="Tasks") are deleted immediately.
+    - Projects/categories are only deleted if they have no children.
+    - All other document types (Goals, Labels, etc.) are blocked.
+
+    Requires AMAZING_MARVIN_FULL_ACCESS_TOKEN.
+
+    Args:
+        item_id: The _id of the document to delete
+    """
+    start_time = time.time()
+    try:
+        api_client = create_api_client()
+
+        # Safety pre-flight: read the document before deleting
+        doc = api_client.read_doc(item_id)
+        db = doc.get("db", "")
+        doc_type = doc.get("type", "")
+        title = doc.get("title", item_id)
+        api_calls = 1
+
+        is_task = db == "Tasks" and doc_type not in ("project", "category")
+        is_container = doc_type in ("project", "category")
+
+        if is_task:
+            pass  # safe to delete
+        elif is_container:
+            children = api_client.get_children(item_id)
+            api_calls += 1
+            if children:
+                return create_error_response(
+                    ValueError(
+                        f"'{title}' is a {doc_type} with {len(children)} children. "
+                        "Delete or move all children before deleting the container."
+                    ),
+                    "/doc/delete",
+                    debug,
+                    start_time,
+                )
+        else:
+            return create_error_response(
+                ValueError(
+                    f"'{title}' has db='{db}', type='{doc_type}'. "
+                    "Only tasks and empty projects/categories may be deleted."
+                ),
+                "/doc/delete",
+                debug,
+                start_time,
+            )
+
+        result = api_client.delete_doc(item_id)
+        api_calls += 1
+
+        return create_simple_response(
+            data={**result, "deleted_title": title, "deleted_type": doc_type or "task"},
+            summary_text=f"Deleted {doc_type or 'task'} '{title}' ({item_id})",
+            api_endpoint="/doc/delete",
+            api_calls_made=api_calls,
+            debug=debug,
+            start_time=start_time,
+        )
+    except Exception as e:
+        logger.exception("Failed to delete document %s", item_id)
+        return create_error_response(e, "/doc/delete", debug, start_time)
+
+
+@mcp.tool()
 async def get_labels(debug: bool = False) -> StandardResponse:
     """Get all labels from Amazing Marvin"""
     start_time = time.time()
