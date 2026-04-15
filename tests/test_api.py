@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from amazing_marvin_mcp.main import delete_doc as delete_doc_tool
+from amazing_marvin_mcp.main import delete_document as delete_document_tool
 from amazing_marvin_mcp.main import get_child_tasks as get_child_tasks_tool
 from amazing_marvin_mcp.analytics import (
     get_completed_tasks,
@@ -103,6 +103,16 @@ class TestMarvinAPIClient:
         """Test getting currently tracked item."""
         tracked = api_client.get_currently_tracked_item()
         assert tracked is not None
+
+    def test_get_habits(self, api_client):
+        """Smoke test: get_habits returns a list."""
+        result = api_client.get_habits()
+        assert isinstance(result, list)
+
+    def test_get_today_time_blocks(self, api_client):
+        """Smoke test: get_today_time_blocks returns a list."""
+        result = api_client.get_today_time_blocks()
+        assert isinstance(result, list)
 
 
 class TestTaskAndProjectManagement:
@@ -458,28 +468,28 @@ class TestFullAccessToken:
 
     # --- guard: ValueError when token absent ---
 
-    def test_read_doc_raises_without_token(self):
+    def test_get_document_raises_without_token(self):
         with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
-            self._client().read_doc("id1")
+            self._client().get_document("id1")
 
-    def test_update_doc_raises_without_token(self):
+    def test_update_document_raises_without_token(self):
         with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
-            self._client().update_doc("id1", {"title": "x"})
+            self._client().update_document("id1", {"title": "x"})
 
-    def test_create_doc_raises_without_token(self):
+    def test_create_document_raises_without_token(self):
         with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
-            self._client().create_doc({"title": "x"})
+            self._client().create_document({"title": "x"})
 
-    def test_delete_doc_raises_without_token(self):
+    def test_delete_document_raises_without_token(self):
         with pytest.raises(ValueError, match="AMAZING_MARVIN_FULL_ACCESS_TOKEN"):
-            self._client().delete_doc("id1")
+            self._client().delete_document("id1")
 
     # --- correct HTTP method, URL, headers, payload ---
 
     @patch("requests.get")
-    def test_read_doc_uses_get_and_full_access_header(self, mock_get: MagicMock):
+    def test_get_document_uses_get_and_full_access_header(self, mock_get: MagicMock):
         mock_get.return_value = self._mock_response({"_id": "id1", "title": "T"})
-        result = self._client("tok").read_doc("id1")
+        result = self._client("tok").get_document("id1")
         mock_get.assert_called_once_with(
             f"{self.BASE_URL}/doc?id=id1",
             headers={"X-Full-Access-Token": "tok"},
@@ -487,9 +497,9 @@ class TestFullAccessToken:
         assert result["_id"] == "id1"
 
     @patch("requests.post")
-    def test_update_doc_sends_correct_payload(self, mock_post: MagicMock):
+    def test_update_document_sends_correct_payload(self, mock_post: MagicMock):
         mock_post.return_value = self._mock_response({"_id": "id1"})
-        self._client("tok").update_doc("id1", {"note": "hi"})
+        self._client("tok").update_document("id1", {"note": "hi"})
         mock_post.assert_called_once_with(
             f"{self.BASE_URL}/doc/update",
             headers={"X-Full-Access-Token": "tok"},
@@ -497,9 +507,9 @@ class TestFullAccessToken:
         )
 
     @patch("requests.post")
-    def test_create_doc_sends_correct_payload(self, mock_post: MagicMock):
+    def test_create_document_sends_correct_payload(self, mock_post: MagicMock):
         mock_post.return_value = self._mock_response({"_id": "new1"})
-        self._client("tok").create_doc({"title": "Raw"})
+        self._client("tok").create_document({"title": "Raw"})
         mock_post.assert_called_once_with(
             f"{self.BASE_URL}/doc/create",
             headers={"X-Full-Access-Token": "tok"},
@@ -507,9 +517,9 @@ class TestFullAccessToken:
         )
 
     @patch("requests.post")
-    def test_delete_doc_sends_correct_payload(self, mock_post: MagicMock):
+    def test_delete_document_sends_correct_payload(self, mock_post: MagicMock):
         mock_post.return_value = self._mock_response({})
-        self._client("tok").delete_doc("id1")
+        self._client("tok").delete_document("id1")
         mock_post.assert_called_once_with(
             f"{self.BASE_URL}/doc/delete",
             headers={"X-Full-Access-Token": "tok"},
@@ -517,12 +527,24 @@ class TestFullAccessToken:
         )
 
     @patch("requests.get")
-    def test_read_doc_does_not_use_api_token_header(self, mock_get: MagicMock):
+    def test_get_document_does_not_use_api_token_header(self, mock_get: MagicMock):
         """Full-access requests must NOT send X-API-Token."""
         mock_get.return_value = self._mock_response({"_id": "id1"})
-        self._client("tok").read_doc("id1")
+        self._client("tok").get_document("id1")
         call_headers = mock_get.call_args.kwargs["headers"]
         assert "X-API-Token" not in call_headers
+
+    @patch("requests.post")
+    def test_update_document_accepts_list_setters(self, mock_post: MagicMock):
+        """update_document should pass list[dict] setters through unchanged."""
+        mock_post.return_value = self._mock_response({"_id": "id1"})
+        setters = [{"key": "title", "val": "New"}, {"key": "updatedAt", "val": 1700000000000}]
+        self._client("tok").update_document("id1", setters)
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/doc/update",
+            headers={"X-Full-Access-Token": "tok"},
+            json={"itemId": "id1", "setters": setters},
+        )
 
 
 class TestGetAllTasksFieldProjection:
@@ -643,8 +665,8 @@ class TestGetChildTasksTypeSplit:
         assert "type" not in raw
 
 
-class TestDeleteDocTool:
-    """Unit tests for the delete_doc MCP tool safety pre-flight logic.
+class TestDeleteDocumentTool:
+    """Unit tests for the delete_document MCP tool safety pre-flight logic.
 
     These tests exercise the three-tier classification (task / container /
     internal doc) without making any live API calls.
@@ -654,9 +676,9 @@ class TestDeleteDocTool:
         self, doc: dict, children: list | None = None
     ) -> MagicMock:
         client = MagicMock(spec=MarvinAPIClient)
-        client.read_doc.return_value = doc
+        client.get_document.return_value = doc
         client.get_children.return_value = children if children is not None else []
-        client.delete_doc.return_value = {}
+        client.delete_document.return_value = {}
         return client
 
     @patch("amazing_marvin_mcp.main.create_api_client")
@@ -666,41 +688,41 @@ class TestDeleteDocTool:
         client = self._make_client(doc)
         mock_create.return_value = client
 
-        result = asyncio.run(delete_doc_tool("t1"))
+        result = asyncio.run(delete_document_tool("t1"))
 
         assert result.success is True
         assert result.data["deleted_title"] == "Buy milk"
         assert result.data["deleted_type"] == "task"
-        client.delete_doc.assert_called_once_with("t1")
+        client.delete_document.assert_called_once_with("t1")
         client.get_children.assert_not_called()
 
     @patch("amazing_marvin_mcp.main.create_api_client")
     def test_non_empty_project_is_blocked(self, mock_create: MagicMock) -> None:
-        """Projects with children must be blocked; delete_doc must not be called."""
+        """Projects with children must be blocked; delete_document must not be called."""
         doc = {"_id": "p1", "type": "project", "title": "My Project"}
         children = [{"_id": "t1", "title": "Child task"}]
         client = self._make_client(doc, children)
         mock_create.return_value = client
 
-        result = asyncio.run(delete_doc_tool("p1"))
+        result = asyncio.run(delete_document_tool("p1"))
 
         assert result.success is False
         assert "1" in result.summary.text  # child count present in message
-        client.delete_doc.assert_not_called()
+        client.delete_document.assert_not_called()
 
     @patch("amazing_marvin_mcp.main.create_api_client")
     def test_non_empty_category_is_blocked(self, mock_create: MagicMock) -> None:
-        """Categories with children must be blocked; delete_doc must not be called."""
+        """Categories with children must be blocked; delete_document must not be called."""
         doc = {"_id": "c1", "type": "category", "title": "Work"}
         children = [{"_id": "t2", "title": "Sub-task"}, {"_id": "t3", "title": "Another"}]
         client = self._make_client(doc, children)
         mock_create.return_value = client
 
-        result = asyncio.run(delete_doc_tool("c1"))
+        result = asyncio.run(delete_document_tool("c1"))
 
         assert result.success is False
         assert "2" in result.summary.text
-        client.delete_doc.assert_not_called()
+        client.delete_document.assert_not_called()
 
     @patch("amazing_marvin_mcp.main.create_api_client")
     def test_empty_project_is_deleted(self, mock_create: MagicMock) -> None:
@@ -709,12 +731,12 @@ class TestDeleteDocTool:
         client = self._make_client(doc, children=[])
         mock_create.return_value = client
 
-        result = asyncio.run(delete_doc_tool("p2"))
+        result = asyncio.run(delete_document_tool("p2"))
 
         assert result.success is True
         assert result.data["deleted_title"] == "Empty Project"
         assert result.data["deleted_type"] == "project"
-        client.delete_doc.assert_called_once_with("p2")
+        client.delete_document.assert_called_once_with("p2")
 
     @patch("amazing_marvin_mcp.main.create_api_client")
     def test_internal_doc_is_blocked(self, mock_create: MagicMock) -> None:
@@ -723,12 +745,327 @@ class TestDeleteDocTool:
         client = self._make_client(doc)
         mock_create.return_value = client
 
-        result = asyncio.run(delete_doc_tool("g1"))
+        result = asyncio.run(delete_document_tool("g1"))
 
         assert result.success is False
         assert "Goals" in result.summary.text
-        client.delete_doc.assert_not_called()
+        client.delete_document.assert_not_called()
         client.get_children.assert_not_called()
+
+
+class TestSettersBuilder:
+    """Unit tests for build_setters — no API key required."""
+
+    from amazing_marvin_mcp.setters_builder import build_setters
+    from amazing_marvin_mcp.models import TaskUpdateRequest
+
+    FIXED_TIME = 1700000000.0
+    NOW_MS = 1700000000000
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_title_only_produces_title_and_updatedAt(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", title="Hello")
+        setters = build_setters(req)
+        keys = [s["key"] for s in setters]
+        assert "title" in keys
+        assert "updatedAt" in keys
+        # title is not a tracked field, so no fieldUpdates entry
+        assert not any(k.startswith("fieldUpdates") for k in keys)
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_due_date_produces_fieldUpdates_entry(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", due_date="2026-12-31")
+        setters = build_setters(req)
+        keys = [s["key"] for s in setters]
+        assert "dueDate" in keys
+        assert "fieldUpdates.dueDate" in keys
+        fu = next(s for s in setters if s["key"] == "fieldUpdates.dueDate")
+        assert fu["val"] == self.NOW_MS
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_none_fields_excluded(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x")  # all optional fields None
+        setters = build_setters(req)
+        keys = [s["key"] for s in setters]
+        # Only updatedAt should be present
+        assert keys == ["updatedAt"]
+
+    @patch("amazing_marvin_mcp.setters_builder.time.time", return_value=FIXED_TIME)
+    def test_time_estimate_converted_to_ms(self, _mock_time):
+        from amazing_marvin_mcp.setters_builder import build_setters
+        from amazing_marvin_mcp.models import TaskUpdateRequest
+
+        req = TaskUpdateRequest(item_id="x", time_estimate=1)  # 1 minute
+        setters = build_setters(req)
+        te = next(s for s in setters if s["key"] == "timeEstimate")
+        assert te["val"] == 60_000  # 1 min → 60000 ms
+
+
+class TestUpdateTaskTool:
+    """Unit tests for the update_task MCP tool — no API key required."""
+
+    def _make_client(self) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.update_document.return_value = {"_id": "t1"}
+        client.has_full_access = True
+        return client
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_builds_correct_setters_for_title(self, mock_create: MagicMock) -> None:
+        client = self._make_client()
+        mock_create.return_value = client
+
+        from amazing_marvin_mcp.main import update_task as update_task_tool
+
+        asyncio.run(update_task_tool("t1", title="New Title"))
+
+        call_args = client.update_document.call_args
+        item_id = call_args[0][0]
+        setters = call_args[0][1]
+        assert item_id == "t1"
+        assert isinstance(setters, list)
+        keys = [s["key"] for s in setters]
+        assert "title" in keys
+        assert "updatedAt" in keys
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_only_set_fields_included_in_setters(self, mock_create: MagicMock) -> None:
+        client = self._make_client()
+        mock_create.return_value = client
+
+        from amazing_marvin_mcp.main import update_task as update_task_tool
+
+        asyncio.run(update_task_tool("t1", note="hello"))
+
+        setters = client.update_document.call_args[0][1]
+        keys = [s["key"] for s in setters]
+        assert "note" in keys
+        assert "title" not in keys
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_raises_when_no_full_access_token(self, mock_create: MagicMock) -> None:
+        client = MagicMock(spec=MarvinAPIClient)
+        client.update_document.side_effect = ValueError(
+            "Full-access token not configured. Set AMAZING_MARVIN_FULL_ACCESS_TOKEN."
+        )
+        mock_create.return_value = client
+
+        from amazing_marvin_mcp.main import update_task as update_task_tool
+
+        result = asyncio.run(update_task_tool("t1", title="x"))
+        assert result.success is False
+
+
+class TestNewApiMethods:
+    """Unit tests for the 9 new api.py methods — no live API calls."""
+
+    BASE_URL = "https://serv.amazingmarvin.com/api"
+
+    def _client(self) -> MarvinAPIClient:
+        return MarvinAPIClient(api_key="key")
+
+    def _mock_response(self, payload: Any, status: int = 200) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = status
+        resp.content = b"x"
+        resp.json.return_value = payload
+        resp.raise_for_status.return_value = None
+        return resp
+
+    @patch("requests.get")
+    def test_get_habits_calls_correct_endpoint(self, mock_get: MagicMock):
+        mock_get.return_value = self._mock_response([{"_id": "h1"}])
+        result = self._client().get_habits()
+        mock_get.assert_called_once_with(
+            f"{self.BASE_URL}/habits", headers={"X-API-Token": "key"}
+        )
+        assert result == [{"_id": "h1"}]
+
+    @patch("requests.get")
+    def test_get_habit_passes_id_as_query_param(self, mock_get: MagicMock):
+        mock_get.return_value = self._mock_response({"_id": "h1"})
+        self._client().get_habit("h1")
+        mock_get.assert_called_once_with(
+            f"{self.BASE_URL}/habit?id=h1", headers={"X-API-Token": "key"}
+        )
+
+    @patch("requests.post")
+    def test_update_habit_posts_habit_data(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({})
+        self._client().update_habit({"habitId": "h1", "action": "record"})
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/updateHabit",
+            headers={"X-API-Token": "key"},
+            json={"habitId": "h1", "action": "record"},
+        )
+
+    @patch("requests.post")
+    def test_add_event_posts_event_data(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({"_id": "e1"})
+        self._client().add_event({"title": "Meeting", "start": "2026-04-16T09:00:00"})
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/addEvent",
+            headers={"X-API-Token": "key"},
+            json={"title": "Meeting", "start": "2026-04-16T09:00:00"},
+        )
+
+    @patch("requests.get")
+    def test_get_today_time_blocks_without_date(self, mock_get: MagicMock):
+        mock_get.return_value = self._mock_response([])
+        self._client().get_today_time_blocks()
+        mock_get.assert_called_once_with(
+            f"{self.BASE_URL}/todayTimeBlocks", headers={"X-API-Token": "key"}
+        )
+
+    @patch("requests.get")
+    def test_get_today_time_blocks_with_date(self, mock_get: MagicMock):
+        mock_get.return_value = self._mock_response([])
+        self._client().get_today_time_blocks("2026-04-16")
+        mock_get.assert_called_once_with(
+            f"{self.BASE_URL}/todayTimeBlocks?date=2026-04-16",
+            headers={"X-API-Token": "key"},
+        )
+
+    @patch("requests.post")
+    def test_set_reminders_wraps_in_reminders_key(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({})
+        reminders = [{"itemId": "t1", "time": 900}]
+        self._client().set_reminders(reminders)
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/reminder/set",
+            headers={"X-API-Token": "key"},
+            json={"reminders": reminders},
+        )
+
+    @patch("requests.post")
+    def test_delete_reminders_wraps_in_reminderIds_key(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({})
+        self._client().delete_reminders(["r1", "r2"])
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/reminder/delete",
+            headers={"X-API-Token": "key"},
+            json={"reminderIds": ["r1", "r2"]},
+        )
+
+    @patch("requests.post")
+    def test_spend_reward_points_posts_correctly(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({})
+        self._client().spend_reward_points(50, "2026-04-16")
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/spendRewardPoints",
+            headers={"X-API-Token": "key"},
+            json={"points": 50, "date": "2026-04-16"},
+        )
+
+    @patch("requests.post")
+    def test_unclaim_reward_points_posts_correctly(self, mock_post: MagicMock):
+        mock_post.return_value = self._mock_response({})
+        self._client().unclaim_reward_points("t1", "2026-04-16")
+        mock_post.assert_called_once_with(
+            f"{self.BASE_URL}/unclaimRewardPoints",
+            headers={"X-API-Token": "key"},
+            json={"itemId": "t1", "date": "2026-04-16"},
+        )
+
+
+class TestNewMcpTools:
+    """Unit tests for the new MCP tools — no API key required."""
+
+    def _make_client(self) -> MagicMock:
+        client = MagicMock(spec=MarvinAPIClient)
+        return client
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_get_habits_tool_returns_list(self, mock_create: MagicMock) -> None:
+        from amazing_marvin_mcp.main import get_habits as get_habits_tool
+
+        client = self._make_client()
+        client.get_habits.return_value = [{"_id": "h1", "title": "Exercise"}]
+        mock_create.return_value = client
+
+        result = asyncio.run(get_habits_tool())
+        assert result.success is True
+        assert result.data["habits"] == [{"_id": "h1", "title": "Exercise"}]
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_record_habit_tool_sends_record_action(self, mock_create: MagicMock) -> None:
+        from amazing_marvin_mcp.main import record_habit as record_habit_tool
+
+        client = self._make_client()
+        client.update_habit.return_value = {}
+        mock_create.return_value = client
+
+        asyncio.run(record_habit_tool("h1"))
+        client.update_habit.assert_called_once_with({"habitId": "h1", "action": "record"})
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_record_habit_tool_includes_value_when_set(self, mock_create: MagicMock) -> None:
+        from amazing_marvin_mcp.main import record_habit as record_habit_tool
+
+        client = self._make_client()
+        client.update_habit.return_value = {}
+        mock_create.return_value = client
+
+        asyncio.run(record_habit_tool("h1", value=5000))
+        client.update_habit.assert_called_once_with(
+            {"habitId": "h1", "action": "record", "value": 5000}
+        )
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_undo_habit_tool_sends_undo_action(self, mock_create: MagicMock) -> None:
+        from amazing_marvin_mcp.main import undo_habit as undo_habit_tool
+
+        client = self._make_client()
+        client.update_habit.return_value = {}
+        mock_create.return_value = client
+
+        asyncio.run(undo_habit_tool("h1"))
+        client.update_habit.assert_called_once_with({"habitId": "h1", "action": "undo"})
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_add_event_tool_converts_minutes_to_ms(self, mock_create: MagicMock) -> None:
+        from amazing_marvin_mcp.main import add_event as add_event_tool
+
+        client = self._make_client()
+        client.add_event.return_value = {"_id": "e1"}
+        mock_create.return_value = client
+
+        asyncio.run(add_event_tool("Meeting", "2026-04-16T09:00:00", 30))
+        client.add_event.assert_called_once_with(
+            {"title": "Meeting", "start": "2026-04-16T09:00:00", "length": 1_800_000}
+        )
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_set_reminders_tool_passes_through(self, mock_create: MagicMock) -> None:
+        from amazing_marvin_mcp.main import set_reminders as set_reminders_tool
+
+        client = self._make_client()
+        client.set_reminders.return_value = {}
+        mock_create.return_value = client
+
+        reminders = [{"itemId": "t1", "time": 900}]
+        asyncio.run(set_reminders_tool(reminders))
+        client.set_reminders.assert_called_once_with(reminders)
+
+    @patch("amazing_marvin_mcp.main.create_api_client")
+    def test_delete_reminders_tool_passes_through(self, mock_create: MagicMock) -> None:
+        from amazing_marvin_mcp.main import delete_reminders as delete_reminders_tool
+
+        client = self._make_client()
+        client.delete_reminders.return_value = {}
+        mock_create.return_value = client
+
+        asyncio.run(delete_reminders_tool(["r1", "r2"]))
+        client.delete_reminders.assert_called_once_with(["r1", "r2"])
 
 
 if __name__ == "__main__":

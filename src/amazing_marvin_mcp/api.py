@@ -20,7 +20,7 @@ def create_api_client() -> "MarvinAPIClient":
 class MarvinAPIClient:
     """API client for Amazing Marvin"""
 
-    def __init__(self, api_key: str, full_access_token: str = ""):
+    def __init__(self, api_key: str, full_access_token: str | None = None):
         """
         Initialize the API client with the API key
 
@@ -32,28 +32,42 @@ class MarvinAPIClient:
         self.base_url = "https://serv.amazingmarvin.com/api"  # Removed v1 from URL
         self.headers = {"X-API-Token": api_key}
         self.full_access_token = full_access_token
-        self.full_access_headers = {"X-Full-Access-Token": full_access_token}
+        self.full_access_headers: dict[str, str] | None = (
+            {"X-Full-Access-Token": full_access_token} if full_access_token else None
+        )
 
     @property
     def has_full_access(self) -> bool:
         return bool(self.full_access_token)
 
     def _make_request(
-        self, method: str, endpoint: str, data: dict | None = None
+        self,
+        method: str,
+        endpoint: str,
+        data: dict | None = None,
+        use_full_access: bool = False,
     ) -> Any:
         """Make a request to the API"""
+        if use_full_access:
+            if not self.has_full_access:
+                raise ValueError(
+                    "Full-access token not configured. Set AMAZING_MARVIN_FULL_ACCESS_TOKEN."
+                )
+            headers = self.full_access_headers
+        else:
+            headers = self.headers
         url = f"{self.base_url}{endpoint}"
         logger.debug("Making %s request to %s", method, url)
 
         try:
             if method.lower() == "get":
-                response = requests.get(url, headers=self.headers)
+                response = requests.get(url, headers=headers)
             elif method.lower() == "post":
-                response = requests.post(url, headers=self.headers, json=data)
+                response = requests.post(url, headers=headers, json=data)
             elif method.lower() == "put":
-                response = requests.put(url, headers=self.headers, json=data)
+                response = requests.put(url, headers=headers, json=data)
             elif method.lower() == "delete":
-                response = requests.delete(url, headers=self.headers)
+                response = requests.delete(url, headers=headers)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
@@ -72,62 +86,39 @@ class MarvinAPIClient:
             logger.exception("Request error")
             raise
 
-    def _make_full_access_request(
-        self, method: str, endpoint: str, data: dict | None = None
-    ) -> Any:
-        """Make a request using the full-access token."""
-        if not self.has_full_access:
-            raise ValueError(
-                "Full-access token not configured. Set AMAZING_MARVIN_FULL_ACCESS_TOKEN."
-            )
-        url = f"{self.base_url}{endpoint}"
-        logger.debug("Making full-access %s request to %s", method, url)
-
-        try:
-            if method.lower() == "get":
-                response = requests.get(url, headers=self.full_access_headers)
-            elif method.lower() == "post":
-                response = requests.post(
-                    url, headers=self.full_access_headers, json=data
-                )
-            else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
-
-            response.raise_for_status()
-
-            no_content_status = 204
-            if response.status_code == no_content_status or not response.content:
-                return {}
-
-            return response.json()
-        except requests.exceptions.HTTPError:
-            logger.exception("HTTP error (full-access)")
-            raise
-        except requests.exceptions.RequestException:
-            logger.exception("Request error (full-access)")
-            raise
-
-    def read_doc(self, item_id: str) -> dict:
+    def get_document(self, doc_id: str) -> dict:
         """Read any Marvin document by ID (requires full-access token)."""
-        return self._make_full_access_request("get", f"/doc?id={item_id}")
+        return self._make_request("get", f"/doc?id={doc_id}", use_full_access=True)
 
-    def update_doc(self, item_id: str, setters: dict) -> dict:
-        """Update fields on any Marvin document (requires full-access token)."""
-        wire_setters = [{"key": k, "val": v} for k, v in setters.items()]
-        return self._make_full_access_request(
-            "post", "/doc/update", data={"itemId": item_id, "setters": wire_setters}
+    def update_document(self, item_id: str, setters: list[dict] | dict) -> dict:
+        """Update fields on any Marvin document (requires full-access token).
+
+        Args:
+            item_id: The document's _id
+            setters: Either a list of {"key":…,"val":…} dicts (from build_setters) or
+                     a plain dict of field→value pairs (converted to wire format internally).
+        """
+        if isinstance(setters, list):
+            wire_setters = setters
+        else:
+            wire_setters = [{"key": k, "val": v} for k, v in setters.items()]
+        return self._make_request(
+            "post",
+            "/doc/update",
+            data={"itemId": item_id, "setters": wire_setters},
+            use_full_access=True,
         )
 
-    def create_doc(self, doc_data: dict) -> dict:
+    def create_document(self, doc_data: dict) -> dict:
         """Create a raw document. Warning: can create malformed tasks. Not exposed as MCP tool."""
-        return self._make_full_access_request(
-            "post", "/doc/create", data={"doc": doc_data}
+        return self._make_request(
+            "post", "/doc/create", data={"doc": doc_data}, use_full_access=True
         )
 
-    def delete_doc(self, item_id: str) -> dict:
-        """Permanently delete a document. Not exposed as MCP tool."""
-        return self._make_full_access_request(
-            "post", "/doc/delete", data={"itemId": item_id}
+    def delete_document(self, item_id: str) -> dict:
+        """Permanently delete a document."""
+        return self._make_request(
+            "post", "/doc/delete", data={"itemId": item_id}, use_full_access=True
         )
 
     def get_tasks(self, date: str | None = None) -> list[dict]:
@@ -139,11 +130,8 @@ class MarvinAPIClient:
         return self._make_request("get", endpoint)
 
     def get_task(self, task_id: str) -> dict:
-        """Get a specific task or project by ID (requires full access token, not supported by default API token)"""
-        # The Marvin API does not provide a direct /tasks/{id} endpoint. Use /api/doc?id=... with full access token for arbitrary docs.
-        raise NotImplementedError(
-            "Direct task lookup by ID is not supported with the standard API token. Use /api/doc?id=... with full access token."
-        )
+        """Get a specific task by ID (delegates to get_document, requires full-access token)."""
+        return self.get_document(task_id)
 
     def get_projects(self) -> list[dict]:
         """
@@ -289,14 +277,55 @@ class MarvinAPIClient:
         """Create a new project (experimental endpoint)"""
         return self._make_request("post", "/addProject", data=project_data)
 
-    def update_task(self, task_id: str, task_data: dict) -> dict:
-        """Update a task (requires full access token and /api/doc/update)"""
-        raise NotImplementedError(
-            "Task update is not supported with the standard API token. Use /api/doc/update with full access token."
+    def update_task(self, item_id: str, setters: list[dict] | dict) -> dict:
+        """Update a task (delegates to update_document, requires full-access token)."""
+        return self.update_document(item_id, setters)
+
+    def add_event(self, event_data: dict) -> dict:
+        """Add a calendar event."""
+        return self._make_request("post", "/addEvent", data=event_data)
+
+    def get_today_time_blocks(self, date: str | None = None) -> list[dict]:
+        """Get time blocks for today (or a specific date)."""
+        endpoint = "/todayTimeBlocks"
+        if date:
+            endpoint += f"?date={date}"
+        return self._make_request("get", endpoint)
+
+    def get_habits(self) -> list[dict]:
+        """Get all habits."""
+        return self._make_request("get", "/habits")
+
+    def get_habit(self, habit_id: str) -> dict:
+        """Get a specific habit by ID."""
+        return self._make_request("get", f"/habit?id={habit_id}")
+
+    def update_habit(self, habit_data: dict) -> dict:
+        """Update/record a habit."""
+        return self._make_request("post", "/updateHabit", data=habit_data)
+
+    def set_reminders(self, reminders: list[dict]) -> dict:
+        """Set reminders."""
+        return self._make_request("post", "/reminder/set", data={"reminders": reminders})
+
+    def delete_reminders(self, reminder_ids: list[str]) -> dict:
+        """Delete reminders by ID."""
+        return self._make_request(
+            "post", "/reminder/delete", data={"reminderIds": reminder_ids}
         )
 
-    def delete_task(self, task_id: str) -> dict:
-        """Delete a task (requires full access token and /api/doc/delete)"""
-        raise NotImplementedError(
-            "Task deletion is not supported with the standard API token. Use /api/doc/delete with full access token."
+    def unclaim_reward_points(self, item_id: str, date: str) -> dict:
+        """Unclaim previously claimed reward points."""
+        return self._make_request(
+            "post",
+            "/unclaimRewardPoints",
+            data={"itemId": item_id, "date": date},
+        )
+
+    def spend_reward_points(self, points: int, date: str) -> dict:
+        """Spend reward points."""
+        return self._make_request(
+            "post",
+            "/spendRewardPoints",
+            data={"points": points, "date": date},
         )
